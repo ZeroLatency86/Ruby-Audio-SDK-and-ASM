@@ -1,0 +1,193 @@
+streamin in; //Audio Input
+streamin shift; //(1-2^semitones/12)
+streamin step; //(1/window size)
+streamin window; //window size in samples
+streamin fade; //(1/length of fade in samples)
+
+streamout out; //Audio output
+
+int tempind=0; float tempval=0;
+int absmask=2147483647;
+float delA=0; float fadeA=0;
+float mem[441000]; float maxdel=441000;
+float outA=0; float outB=0; float index=0;
+float zero=0; float one=1; float half=0.5; float neghalf=-0.5;
+float up=-0.25; float down=0.25; float negone=-1;
+
+//calculate delays
+movaps xmm7,delA;
+addps xmm7,step;
+movaps xmm0,xmm7;
+cvtps2dq xmm0,xmm0;
+cvtdq2ps xmm0,xmm0;
+subps xmm7,xmm0; //xmm7=delA
+movaps delA,xmm7;
+
+movaps xmm6,xmm7;
+addps xmm6,half;
+movaps xmm0,xmm6;
+cvtps2dq xmm0,xmm0;
+cvtdq2ps xmm0,xmm0;
+subps xmm6,xmm0; //xmm6=delB
+
+movaps xmm0,xmm7;
+cmpps xmm0,up,6;
+movaps xmm1,xmm7;
+cmpps xmm1,down,2;
+andps xmm0,xmm1;
+andps xmm0,one; //xmm0=square
+
+subps xmm0,fadeA;
+movaps xmm5,zero;
+subps xmm5,fade;
+maxps xmm5,xmm0;
+minps xmm5,fade;
+addps xmm5,fadeA; //xmm5=fadeA
+movaps fadeA,xmm5;
+
+movaps xmm4,one;
+subps xmm4,xmm5; //xmm4=fadeB
+
+//Write input to array
+movaps xmm0,index;
+cvtps2dq xmm0,xmm0;
+movaps tempind,xmm0;
+push eax;
+mov eax,tempind[0]; shl eax,4; fld in[0]; fstp mem[eax];
+mov eax,temping[1]; shl eax,4; add eax,4; fld in[1]; fstp mem[eax];
+mov eax,tempind[2]; shl eax,4; add eax,8; fld in[2]; fstp mem[eax];
+mov eax,tempind[3]; shl eax,4; add eax,12; fld in[3]; fstp mem[eax];
+pop eax;
+
+//Delay A
+movaps xmm2,shift;
+movaps xmm1,xmm2;
+mulps xmm2,xmm7;
+andps xmm1,absmask;
+mulps xmm1,half;
+addps xmm2,xmm1;
+mulps xmm2,window;
+
+movaps xmm1,xmm2;
+addps xmm1,neghalf;
+cvtps2dq xmm1,xmm1;
+cvtdq2ps xmm1,xmm1; //xmm1=intdelay
+subps xmm2,xmm1; //xmm2=frac
+
+movaps xmm0,one;
+subps xmm0,xmm2;
+addps xmm2,one;
+divps xmm0,xmm2; //xmm0=frac
+
+movaps xmm2,index;
+subps xmm2,xmm1; //xmm2=temp1
+movaps xmm3,xmm2;
+addps xmm3,negone; //xmm3=temp2
+
+movaps xmm1,xmm2;
+cmpps xmm1,zero,1;
+andps xmm1,maxdel;
+addps xmm2,xmm1; //constrain temp1
+
+cvtps2dq xmm2,xmm2;
+movaps tempind,xmm2;
+push eax;
+mov eax,tempind[0]; shl eax,4; fld mem[eax]; fstp tempval[0];
+mov eax,tempind[1]; shl eax,4; add eax,4; fld mem[eax]; fstp tempval[1];
+mov eax,tempind[2]; shl eax,4; add eax,8; fld mem[eax]; fstp tempval[2];
+mov eax,tempind[3]; shl eax,4; add eax,12; fld mem[eax]; fstp tempval[3];
+movaps xmm2,tempval;
+pop eax;
+
+movaps xmm1,xmm3;
+cmpps xmm1,zero,1;
+andps xmm1,maxdel;
+addps xmm3,xmm1; //constrain temp2
+
+cvtps2dq xmm3,xmm3;
+movaps tempind,xmm3;
+push eax;
+mov eax,tempind[0]; shl eax,4; fld mem[eax]; fstp tempval[0];
+mov eax,tempind[1]; shl eax,4; add eax,4; fld mem[eax]; fstp tempval[1];
+mov eax,tempind[2]; shl eax,4; add eax,8; fld mem[eax]; fstp tempval[2];
+mov eax,tempind[3]; shl eax,4; add eax,12; fld mem[eax]; fstp tempval[3];
+movaps xmm3,tempval;
+pop eax;
+
+subps xmm2,outA;
+mulps xmm2,xmm0;
+addps xmm2,xmm3;
+movaps outA,xmm2;
+
+//Delay B
+movaps xmm2,shift;
+movaps xmm1,xmm2;
+mulps xmm2,xmm6;
+andps xmm1,absmask;
+mulps xmm1,half;
+addps xmm2,xmm1;
+mulps xmm2,window;
+
+movaps xmm1,xmm2;
+addps xmm1,neghalf;
+cvtps2dq xmm1,xmm1;
+cvtdq2ps xmm1,xmm1; //xmm1=intdelay
+subps xmm2,xmm1; //xmm2=frac
+
+movaps xmm0,one;
+subps xmm0,xmm2;
+addps xmm2,one;
+divps xmm0,xmm2; //xmm0=frac
+
+movaps xmm2,index;
+subps xmm2,xmm1; //xmm2=temp1
+movaps xmm3,xmm2;
+addps xmm3,negone; //xmm3=temp2
+
+movaps xmm1,xmm2;
+cmpps xmm1,zero,1;
+andps xmm1,maxdel;
+addps xmm2,xmm1; //constrain temp1
+
+cvtps2dq xmm2,xmm2;
+movaps tempind,xmm2;
+push eax;
+mov eax,tempind[0]; shl eax,4; fld mem[eax]; fstp tempval[0];
+mov eax,tempind[1]; shl eax,4; add eax,4; fld mem[eax]; fstp tempval[1];
+mov eax,tempind[2]; shl eax,4; add eax,8; fld mem[eax]; fstp tempval[2];
+mov eax,tempind[3]; shl eax,4; add eax,12; fld mem[eax]; fstp tempval[3];
+movaps xmm2,tempval;
+pop eax;
+
+movaps xmm1,xmm3;
+cmpps xmm1,zero,1;
+andps xmm1,maxdel;
+addps xmm3,xmm1; //constrain temp2
+
+cvtps2dq xmm3,xmm3;
+movaps tempind,xmm3;
+push eax;
+mov eax,tempind[0]; shl eax,4; fld mem[eax]; fstp tempval[0];
+mov eax,tempind[1]; shl eax,4; add eax,4; fld mem[eax]; fstp tempval[1];
+mov eax,tempind[2]; shl eax,4; add eax,8; fld mem[eax]; fstp tempval[2];
+mov eax,tempind[3]; shl eax,4; add eax,12; fld mem[eax]; fstp tempval[3];
+movaps xmm3,tempval;
+pop eax;
+
+subps xmm2,outB;
+mulps xmm2,xmm0;
+addps xmm2,xmm3;
+movaps outB,xmm2;
+
+mulps xmm2,xmm4;
+mulps xmm5,outA;
+addps xmm2,xmm5;
+movaps out,xmm2;
+
+movaps xmm0,index;
+addps xmm0,one;
+movaps xmm1,xmm0;
+cmpps xmm1,maxdel,5;
+andps xmm1,maxdel;
+subps xmm0,xmm1;
+movaps index,xmm0;
