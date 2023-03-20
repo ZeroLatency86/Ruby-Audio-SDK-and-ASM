@@ -1,0 +1,75 @@
+streamin dry; // step 4
+streamin mix; // step 4
+streamin sr; // step 13
+streamin c1;
+streamin c2;
+streamout final; // step 4
+
+int arrayindex=0;
+float memmax=192099;
+float index=0;
+float F1P0=1.0;
+float mem[192100];
+float in=0; // step 17
+float feedback=0; // step 18
+float delay=0; //step 22
+float delin=0; // step 13 & 22
+
+// here is the time&feed code (step 20)
+movaps xmm0,c1;
+addps xmm0,c1;
+movaps xmm1,xmm0;
+mulps xmm1,sr;
+movaps delay,xmm1;
+movaps xmm0,c2;
+mulps xmm0,feedback;
+movaps delin,xmm0;
+
+// 3 lines for step 16
+movaps xmm0,dry;
+addps xmm0, delin;
+movaps in, xmm0;
+
+movaps xmm0,index;
+movaps xmm2,xmm0; // this is step 2
+cvtps2dq xmm0,xmm0;
+movaps arrayindex,xmm0;
+
+push eax;
+mov eax,arrayindex[0];shl eax,4;           fld in[0];fstp mem[eax];
+mov eax,arrayindex[1];shl eax,4;add eax,4; fld in[1];fstp mem[eax];
+mov eax,arrayindex[2];shl eax,4;add eax,8; fld in[2];fstp mem[eax];
+mov eax,arrayindex[3];shl eax,4;add eax,12;fld in[3];fstp mem[eax];
+pop eax;
+
+// from here til the end of the delay code I changed xmm0 to xmm2 (see step 2)
+addps xmm2,F1P0;
+
+movaps xmm1,xmm2;
+cmpps xmm1,delay,1;
+andps xmm2,xmm1;
+minps xmm2,memmax;
+movaps index,xmm2;
+
+
+cvtps2dq xmm2,xmm2;
+movaps arrayindex,xmm2;
+
+push eax;
+mov eax,arrayindex[0];shl eax,4;           fld mem[eax];fstp feedback[0];
+mov eax,arrayindex[1];shl eax,4;add eax,4; fld mem[eax];fstp feedback[1];
+mov eax,arrayindex[2];shl eax,4;add eax,8; fld mem[eax];fstp feedback[2];
+mov eax,arrayindex[3];shl eax,4;add eax,12;fld mem[eax];fstp feedback[3];
+pop eax;
+
+// here is step 6
+movaps xmm2,feedback;
+
+// step 7 (mix code)
+movaps xmm0,F1P0; // step 3
+subps xmm0,mix;
+movaps xmm1,dry;
+mulps xmm1,xmm0;
+mulps xmm2,mix;
+addps xmm1,xmm2;
+movaps final,xmm1;
