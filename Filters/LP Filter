@@ -1,0 +1,36 @@
+streamin in;
+streamin w;
+streamin d;
+streamin smpr;
+streamout out;
+//smpr = 6.28319 / samplerate
+float dnrm=0.000000000000001;
+float wf,df,sum,fir,a,a1,a2,fira;
+
+in=in+dnrm;
+
+//W
+wf=w*smpr;
+wf=min(wf,1.9);
+
+//RES
+//df=(1-d)+(1-d);
+df=1-d;
+df=max(0.02,(df));
+a=(2-wf)+(wf*df);
+df=(((2+wf)*(2-wf))*df)/(a+a);
+
+//FIR
+fir=(in+fira)*0.25;
+fira=in;
+
+//SUM
+sum=fir-(a2+df*a1);
+
+//Warp1
+a1=(sum*wf)+a1;
+
+//Warp2
+a2=(a1*wf)+a2;
+
+out=a2-dnrm;
