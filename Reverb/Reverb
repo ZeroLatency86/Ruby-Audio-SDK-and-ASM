@@ -1,0 +1,493 @@
+monoin InL;
+monoin InR;
+monoin RoomSize;
+monoin Damping;
+monoin Direct;
+monoin Cross;
+streamin SRratio;
+streamin CombSpread;
+streamin CombCentre;
+streamin AllSpread;
+streamin AllCentre;
+
+monoout OutL;
+monoout OutR;
+streamout Dummy;
+
+//Comb Filter Parameters Per Block
+float DampTempA=0; float DampTempB=0; float DampTempC=0; float DampTempD=0;
+float FBA=0; float FBB=0; float FBC=0; float FBD=0;
+float CombOffset=-1640;
+float DelayA=0;float DelayB=0;float DelayC=0; float DelayD=0;
+int SSEoffsetA=0;int SSEoffsetB=0;int SSEoffsetC=0;int SSEoffsetD=0;
+int DelA=0; int DelB=0; int DelC=0; int DelD=0;
+
+//All Pass Filter Parameter Per Block
+float FBL=0; float FBR=0;
+float LoopL=0; float LoopR=0;
+float DelayL=1; float DelayR=1;
+float AllOffset=-402;
+int SSEoffsetL=0; int SSEoffsetR=0;
+int DelL=0; int DelR=0;
+//All Pass Filter unique constants
+float Feedback=0.5; float FeedInv=-0.5;
+
+//Shared
+float ingain=0.15;
+float mem[32768];
+int max=4095;
+float Pointer=0.0000000000;
+int Index=0; float Temp=0.0;
+int active=0;
+float Params=0;
+float UpRate=0.0005; float DownRate=-0.0005;
+
+//Constants
+float Zero=0;  float One=1;
+int absmask=2147483647; float threshold=1e-7;
+
+//Pass Comb->Allpass
+float CombOutL=0; float CombOutR=0;
+//Pass Allpass->Mixer
+float AllOutL=0; float AllOutR=0;
+
+stage0;
+
+//Store Integer SSE Offsets for Index maths
+mov eax,4;	mov SSEoffsetA[1],eax;
+mov eax,8;	mov SSEoffsetA[2],eax;
+mov eax,12;	mov SSEoffsetA[3],eax;
+
+mov eax,16;	mov SSEoffsetB[0],eax;
+mov eax,20;	mov SSEoffsetB[1],eax;
+mov eax,24;	mov SSEoffsetB[2],eax;
+mov eax,28;	mov SSEoffsetB[3],eax;
+
+mov eax,32;	mov SSEoffsetC[0],eax;
+mov eax,36;	mov SSEoffsetC[1],eax;
+mov eax,40;	mov SSEoffsetC[2],eax;
+mov eax,44;	mov SSEoffsetC[3],eax;
+
+mov eax,48;	mov SSEoffsetD[0],eax;
+mov eax,52;	mov SSEoffsetD[1],eax;
+mov eax,56;	mov SSEoffsetD[2],eax;
+mov eax,60;	mov SSEoffsetD[3],eax;
+
+mov eax,64;	mov SSEoffsetL[0],eax;
+mov eax,68;	mov SSEoffsetL[1],eax;
+mov eax,72;	mov SSEoffsetL[2],eax;
+mov eax,76;	mov SSEoffsetL[3],eax;
+
+mov eax,80;	mov SSEoffsetR[0],eax;
+mov eax,84;	mov SSEoffsetR[1],eax;
+mov eax,88;	mov SSEoffsetR[2],eax;
+mov eax,92;	mov SSEoffsetR[3],eax;
+
+//Initialise De-zipped Parameters
+fld RoomSize[0]; fstp Params[0];
+fld Damping[0]; fstp Params[1];
+fld MixL[0]; fstp Params[2];
+fld MixR[0]; fstp Params[3];
+
+//Initialise Delay Times
+mov eax,228; mov DelA[0],eax;
+mov eax,168; mov DelA[1],eax;
+mov eax,102; mov DelA[2],eax;
+mov eax,33; mov DelA[3],eax;
+
+mov eax,-33; mov DelB[0],eax;
+mov eax,-112; mov DelB[1],eax;
+mov eax,-201; mov DelB[2],eax;
+mov eax,-273; mov DelB[3],eax;
+
+mov eax,251; mov DelC[0],eax;
+mov eax,191; mov DelC[1],eax;
+mov eax,125; mov DelC[2],eax;
+mov eax,56; mov DelC[3],eax;
+
+mov eax,-10; mov DelD[0],eax;
+mov eax,-89; mov DelD[1],eax;
+mov eax,-178; mov DelD[2],eax;
+mov eax,-250; mov DelD[3],eax;
+
+mov eax,154; mov DelL[0],eax;
+mov eax,39; mov DelL[1],eax;
+mov eax,-61; mov DelL[2],eax;
+mov eax,-177; mov DelL[3],eax;
+
+mov eax,177; mov DelR[0],eax;
+mov eax,62; mov DelR[1],eax;
+mov eax,-38; mov DelR[2],eax;
+mov eax,-154; mov DelR[3],eax;
+stage0;
+
+stage2;
+//Auto Bypass when no input or output signal
+pslld xmm2,32;  //zero xmm0, value passed when bypassed
+movaps xmm3,xmm2;
+mov eax,Temp[0];
+add eax,InL[0]; add eax,InR[0];
+and eax,1610612736; //Threshold 1e-18ish by masking float exponent
+add eax,active[0];
+shr eax,2;
+mov active[0],eax;
+jz FXOff;  //Bypass when gain and output value go below 1e-18
+
+
+//PACK and DEZIP inputs
+fld RoomSize[0]; fstp Temp[0];
+fld Damping[0]; fstp Temp[1];
+fld Direct[0]; fstp Temp[2];
+fld Cross[0]; fstp Temp[3];
+
+//Update delays (hop 512)
+mov eax,ecx;
+and eax,511;
+jnz NoRead;
+
+movaps xmm0,DelA;
+movaps xmm1,DelB;
+movaps xmm2,DelC;
+movaps xmm3,DelD;
+movaps xmm4,DelL;
+movaps xmm5,DelR;
+
+movaps xmm6,CombSpread;
+movaps xmm7,CombOffset;
+
+cvtdq2ps xmm0,xmm0;
+cvtdq2ps xmm1,xmm1;
+cvtdq2ps xmm2,xmm2;
+cvtdq2ps xmm3,xmm3;
+cvtdq2ps xmm4,xmm4;
+cvtdq2ps xmm5,xmm5;
+
+mulps xmm0,xmm6;
+addps xmm0,xmm7;
+mulps xmm1,xmm6;
+addps xmm1,xmm7;
+mulps xmm2,xmm6;
+addps xmm2,xmm7;
+mulps xmm3,xmm6;
+addps xmm3,xmm7;
+
+mulps xmm4,AllSpread;
+addps xmm4,AllOffset;
+mulps xmm5,AllSpread;
+addps xmm5,AllOffset;
+
+movaps xmm6,SRratio;
+movaps xmm7,CombCentre;
+
+mulps xmm0,xmm6;
+mulps xmm0,xmm7;
+mulps xmm1,xmm6;
+mulps xmm1,xmm7;
+mulps xmm2,xmm6;
+mulps xmm2,xmm7;
+mulps xmm3,xmm6;
+mulps xmm3,xmm7;
+
+mulps xmm4,xmm7;
+mulps xmm4,AllCentre;
+mulps xmm5,xmm7;
+mulps xmm5,AllCentre;
+
+movaps DelayA,xmm0;
+movaps DelayB,xmm1;
+movaps DelayC,xmm2;
+movaps DelayD,xmm3;
+movaps DelayL,xmm4;
+movaps DelayR,xmm5;
+
+NoRead:
+
+//WRITE
+//Dezip parameters
+movaps xmm5,Temp; subps xmm5,Params;
+
+movaps xmm6,InL;
+shufps xmm6,xmm6,0;
+mulps xmm6,ingain;
+
+maxps xmm5,DownRate; minps xmm5,UpRate;
+
+movaps xmm7,InR;
+shufps xmm7,xmm7,0;
+mulps xmm7,ingain;
+
+addps xmm5,Params; movaps Params,xmm5;
+
+movaps xmm4,xmm5;
+shufps xmm4,xmm4,170;
+shufps xmm5,xmm5,255;
+
+movaps xmm0,xmm6;
+movaps xmm1,xmm7;
+
+mulps xmm1,xmm5;
+mulps xmm6,xmm4;
+addps xmm6,xmm1;
+
+mulps xmm0,xmm5;
+mulps xmm7,xmm4;
+addps xmm7,xmm0;
+
+movaps xmm0,FBA;
+addps xmm0,xmm6;
+movaps FBA,xmm0;
+
+movaps xmm1,FBB;
+addps xmm1,xmm6;
+movaps FBB,xmm1;
+
+movaps xmm0,FBC;
+addps xmm0,xmm7;
+movaps FBC,xmm0;
+
+movaps xmm1,FBD;
+addps xmm1,xmm7;
+movaps FBD,xmm1;
+
+mov eax,CombOutL[0];
+mov LoopL[3],eax;
+movaps xmm0,LoopL;
+
+mov eax,CombOutR[0];
+mov LoopR[3],eax;
+movaps xmm1,LoopR;
+
+shufps xmm0,xmm0,147;
+addps xmm0,FBL;
+movaps FBL,xmm0;
+
+shufps xmm1,xmm1,147;
+addps xmm1,FBR;
+movaps FBR,xmm1;
+
+movaps xmm0,Pointer;
+addps xmm0,One;
+cvtps2dq xmm0,xmm0;
+andps xmm0,max;
+cvtdq2ps xmm1,xmm0;
+movaps Pointer,xmm1;
+pslld xmm0,7;
+movaps Index,xmm0;
+mov eax,Index[0];
+
+fld FBA[0]; fstp mem[eax]; add eax,4;
+fld FBA[1]; fstp mem[eax]; add eax,4;
+fld FBA[2]; fstp mem[eax]; add eax,4;
+fld FBA[3]; fstp mem[eax]; add eax,4;
+fld FBB[0]; fstp mem[eax]; add eax,4;
+fld FBB[1]; fstp mem[eax]; add eax,4;
+fld FBB[2]; fstp mem[eax]; add eax,4;
+fld FBB[3]; fstp mem[eax]; add eax,4;
+fld FBC[0]; fstp mem[eax]; add eax,4;
+fld FBC[1]; fstp mem[eax]; add eax,4;
+fld FBC[2]; fstp mem[eax]; add eax,4;
+fld FBC[3]; fstp mem[eax]; add eax,4;
+fld FBD[0]; fstp mem[eax]; add eax,4;
+fld FBD[1]; fstp mem[eax]; add eax,4;
+fld FBD[2]; fstp mem[eax]; add eax,4;
+fld FBD[3]; fstp mem[eax]; add eax,4;
+fld FBL[0]; fstp mem[eax]; add eax,4;
+fld FBL[1]; fstp mem[eax]; add eax,4;
+fld FBL[2]; fstp mem[eax]; add eax,4;
+fld FBL[3]; fstp mem[eax]; add eax,4;
+fld FBR[0]; fstp mem[eax]; add eax,4;
+fld FBR[1]; fstp mem[eax]; add eax,4;
+fld FBR[2]; fstp mem[eax]; add eax,4;
+fld FBR[3]; fstp mem[eax];
+
+//READ
+movaps xmm3,Pointer;
+
+movaps xmm0,xmm3;
+addps xmm0,DelayA;
+movaps xmm1,xmm3;
+addps xmm1,DelayB;
+movaps xmm2,xmm3;
+addps xmm2,DelayC;
+addps xmm3,DelayD;
+
+cvtps2dq xmm0,xmm0;
+andps xmm0,max;
+cvtps2dq xmm1,xmm1;
+andps xmm1,max;
+cvtps2dq xmm2,xmm2;
+andps xmm2,max;
+cvtps2dq xmm3,xmm3;
+andps xmm3,max;
+
+pslld xmm0,7;
+orps xmm0,SSEoffsetA;
+pslld xmm1,7;
+orps xmm1,SSEoffsetB;
+pslld xmm2,7;
+orps xmm2,SSEoffsetC;
+pslld xmm3,7;
+orps xmm3,SSEoffsetD;
+
+movaps Index,xmm0;
+mov eax,Index[0];fld mem[eax];fstp Temp[0];
+mov eax,Index[1];fld mem[eax];fstp Temp[1];
+mov eax,Index[2];fld mem[eax];fstp Temp[2];
+mov eax,Index[3];fld mem[eax];fstp Temp[3];
+movaps xmm0,Temp;
+
+movaps Index,xmm1;
+mov eax,Index[0];fld mem[eax];fstp Temp[0];
+mov eax,Index[1];fld mem[eax];fstp Temp[1];
+mov eax,Index[2];fld mem[eax];fstp Temp[2];
+mov eax,Index[3];fld mem[eax];fstp Temp[3];
+movaps xmm1,Temp;
+
+movaps Index,xmm2;
+mov eax,Index[0];fld mem[eax];fstp Temp[0];
+mov eax,Index[1];fld mem[eax];fstp Temp[1];
+mov eax,Index[2];fld mem[eax];fstp Temp[2];
+mov eax,Index[3];fld mem[eax];fstp Temp[3];
+movaps xmm2,Temp;
+
+movaps Index,xmm3;
+mov eax,Index[0];fld mem[eax];fstp Temp[0];
+mov eax,Index[1];fld mem[eax];fstp Temp[1];
+mov eax,Index[2];fld mem[eax];fstp Temp[2];
+mov eax,Index[3];fld mem[eax];fstp Temp[3];
+movaps xmm3,Temp;
+
+//A out in xmm0, B out in xmm1
+//C out in xmm2, D out in xmm3
+
+movaps xmm7,xmm0;
+addps xmm7,xmm1;
+movaps xmm5,xmm2;
+addps xmm5,xmm3;
+
+movaps xmm6,xmm7;
+shufps xmm7,xmm7,27;
+movaps xmm4,xmm5;
+shufps xmm5,xmm5,27;
+
+addps xmm7,xmm6;
+movaps xmm6,xmm7;
+addps xmm5,xmm4;
+movaps xmm4,xmm5;
+
+shufps xmm7,xmm7,177;
+addps xmm7,xmm6;
+movaps CombOutL,xmm7;
+
+shufps xmm5,xmm5,177;
+addps xmm5,xmm4;
+movaps CombOutR,xmm5;
+
+movaps xmm6,Params;
+movaps xmm7,xmm6;
+shufps xmm6,xmm6,0; //xmm6=all [0] = Roomsize
+shufps xmm7,xmm7,85; //xmm7 = all [85] = Damping
+
+movaps xmm4,One;
+subps xmm4,xmm7;
+
+mulps xmm0,xmm4;
+movaps xmm5,DampTempA;
+mulps xmm1,xmm4;
+movaps xmm5,DampTempB;
+mulps xmm2,xmm4;
+movaps xmm5,DampTempC;
+mulps xmm3,xmm4;
+movaps xmm5,DampTempD;
+
+mulps xmm5,xmm7;
+addps xmm0,xmm5;
+movaps DampTempA,xmm0;
+mulps xmm5,xmm7;
+addps xmm1,xmm5;
+movaps DampTempB,xmm1;
+mulps xmm5,xmm7;
+addps xmm2,xmm5;
+movaps DampTempC,xmm2;
+mulps xmm5,xmm7;
+addps xmm3,xmm5;
+movaps DampTempD,xmm3;
+
+mulps xmm0,xmm6;
+movaps FBA,xmm0;
+
+mulps xmm1,xmm6;
+movaps FBB,xmm1;
+
+mulps xmm2,xmm6;
+movaps FBC,xmm2;
+
+mulps xmm3,xmm6;
+movaps FBD,xmm3;
+
+//All Pass Read
+//READ L
+movaps xmm1,Pointer;
+
+movaps xmm0,xmm1;
+addps xmm0,DelayL;
+cvtps2dq xmm0,xmm0;
+addps xmm1,DelayR;
+cvtps2dq xmm1,xmm1;
+
+andps xmm0,max;
+pslld xmm0,7;
+andps xmm1,max;
+pslld xmm1,7;
+
+orps xmm0,SSEoffsetL;
+orps xmm1,SSEoffsetR;
+
+movaps Index,xmm0;
+mov eax,Index[0];fld mem[eax];fstp Temp[0];
+mov eax,Index[1];fld mem[eax];fstp Temp[1];
+mov eax,Index[2];fld mem[eax];fstp Temp[2];
+mov eax,Index[3];fld mem[eax];fstp Temp[3];
+movaps xmm0,Temp;
+
+movaps Index,xmm1;
+mov eax,Index[0];fld mem[eax];fstp Temp[0];
+mov eax,Index[1];fld mem[eax];fstp Temp[1];
+mov eax,Index[2];fld mem[eax];fstp Temp[2];
+mov eax,Index[3];fld mem[eax];fstp Temp[3];
+movaps xmm1,Temp;
+
+movaps xmm3,FeedInv;
+movaps xmm2,CombOutL;
+mulps xmm2,xmm3;
+mulps xmm3,CombOutR;
+
+addps xmm0,xmm2;
+movaps LoopL,xmm0;
+addps xmm1,xmm3;
+movaps LoopR,xmm1;
+
+movaps xmm2,xmm0;
+shufps xmm2,xmm2,255;
+movaps AllOutL,xmm2;
+movaps xmm3,xmm1;
+shufps xmm3,xmm3,255;
+movaps AllOutR,xmm3;
+
+mulps xmm0,FeedBack;
+movaps FBL,xmm0;
+mulps xmm1,FeedBack;
+movaps FBR,xmm1;
+
+//Output threshold for Auto-Cutoff
+movaps xmm1,xmm3;
+addps xmm1,xmm2;
+andps xmm1,absmask;
+cmpps xmm1,threshold,6;
+movaps Temp,xmm1;
+
+
+FXOff:
+movaps OutR,xmm3;
+movaps OutL,xmm2;
+
